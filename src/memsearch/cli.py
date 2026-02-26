@@ -72,6 +72,64 @@ def _cfg_to_memsearch_kwargs(cfg: MemSearchConfig) -> dict:
     }
 
 
+def _resolve_effective_user(cfg: MemSearchConfig, user: str | None) -> str:
+    from .memory.user import resolve_user_id
+
+    return resolve_user_id(explicit=user, config_value=cfg.memory.user_id)
+
+
+def _cfg_to_memsearch_kwargs_with_context(
+    cfg: MemSearchConfig,
+    *,
+    user: str | None = None,
+    reranker: str | None = None,
+    rerank_model: str | None = None,
+    no_rerank: bool = False,
+) -> dict:
+    kwargs = _cfg_to_memsearch_kwargs(cfg)
+    kwargs["user_id"] = _resolve_effective_user(cfg, user)
+    kwargs["memory_base_dir"] = cfg.memory.base_dir
+    kwargs["memory_config"] = cfg.memory
+    kwargs["compact_llm_provider"] = cfg.compact.llm_provider
+    kwargs["compact_llm_model"] = cfg.compact.llm_model or None
+    kwargs["rerank_config"] = cfg.rerank
+
+    resolved_reranker: str | None = None
+    resolved_rerank_model: str | None = None
+    if not no_rerank:
+        if reranker is not None:
+            resolved_reranker = reranker
+            resolved_rerank_model = rerank_model
+        elif cfg.rerank.enabled:
+            resolved_reranker = cfg.rerank.provider
+            resolved_rerank_model = cfg.rerank.model or None
+
+    if resolved_reranker is not None:
+        kwargs["reranker"] = resolved_reranker
+    if resolved_rerank_model is not None:
+        kwargs["rerank_model"] = resolved_rerank_model
+
+    return kwargs
+
+
+def _build_memory_manager(
+    cfg: MemSearchConfig,
+    *,
+    user: str | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+):
+    from .memory import MemoryManager
+
+    return MemoryManager(
+        base_dir=cfg.memory.base_dir,
+        user_id=_resolve_effective_user(cfg, user),
+        config=cfg.memory,
+        llm_provider=llm_provider or cfg.compact.llm_provider,
+        llm_model=llm_model or cfg.compact.llm_model or None,
+    )
+
+
 # -- Common CLI options --
 
 def _common_options(f):
@@ -81,6 +139,7 @@ def _common_options(f):
     f = click.option("--collection", "-c", default=None, help="Milvus collection name.")(f)
     f = click.option("--milvus-uri", default=None, help="Milvus connection URI.")(f)
     f = click.option("--milvus-token", default=None, help="Milvus auth token.")(f)
+    f = click.option("--user", default=None, help="User ID for isolation.")(f)
     return f
 
 
@@ -101,6 +160,7 @@ def index(
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
     force: bool,
 ) -> None:
     """Index markdown files from PATHS."""
@@ -110,7 +170,10 @@ def index(
         provider=provider, model=model, collection=collection,
         milvus_uri=milvus_uri, milvus_token=milvus_token,
     ))
-    ms = MemSearch(list(paths), **_cfg_to_memsearch_kwargs(cfg))
+    ms = MemSearch(
+        list(paths),
+        **_cfg_to_memsearch_kwargs_with_context(cfg, user=user),
+    )
     try:
         n = _run(ms.index(force=force))
         click.echo(f"Indexed {n} chunks.")
@@ -121,16 +184,25 @@ def index(
 @cli.command()
 @click.argument("query")
 @click.option("--top-k", "-k", default=None, type=int, help="Number of results.")
+@click.option("--filter", "filter_expr", default=None, help="Milvus filter expression.")
+@click.option("--reranker", default=None, help="Reranker provider name.")
+@click.option("--rerank-model", default=None, help="Override reranker model.")
+@click.option("--no-rerank", is_flag=True, help="Disable reranking for this call.")
 @_common_options
 @click.option("--json-output", "-j", is_flag=True, help="Output as JSON.")
 def search(
     query: str,
     top_k: int | None,
+    filter_expr: str | None,
+    reranker: str | None,
+    rerank_model: str | None,
+    no_rerank: bool,
     provider: str | None,
     model: str | None,
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
     json_output: bool,
 ) -> None:
     """Search indexed memory for QUERY."""
@@ -140,9 +212,25 @@ def search(
         provider=provider, model=model, collection=collection,
         milvus_uri=milvus_uri, milvus_token=milvus_token,
     ))
-    ms = MemSearch(**_cfg_to_memsearch_kwargs(cfg))
+    effective_user = _resolve_effective_user(cfg, user)
+    ms = MemSearch(
+        **_cfg_to_memsearch_kwargs_with_context(
+            cfg,
+            user=user,
+            reranker=reranker,
+            rerank_model=rerank_model,
+            no_rerank=no_rerank,
+        )
+    )
     try:
-        results = _run(ms.search(query, top_k=top_k or 5))
+        results = _run(
+            ms.search(
+                query,
+                top_k=top_k or 5,
+                filter_expr=filter_expr or "",
+                user_id=effective_user,
+            )
+        )
         if json_output:
             click.echo(json.dumps(results, indent=2, ensure_ascii=False))
         else:
@@ -201,6 +289,7 @@ def expand(
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
 ) -> None:
     """Expand a memory chunk to show full context. [Claude Code plugin: L2]
 
@@ -222,7 +311,10 @@ def expand(
         dimension=None,
     )
     try:
-        chunks = store.query(filter_expr=f'chunk_hash == "{chunk_hash}"')
+        chunks = store.query(
+            filter_expr=f'chunk_hash == "{chunk_hash}"',
+            user_id=_resolve_effective_user(cfg, user),
+        )
         if not chunks:
             click.echo(f"Chunk not found: {chunk_hash}", err=True)
             sys.exit(1)
@@ -387,6 +479,7 @@ def watch(
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
     debounce_ms: int | None,
 ) -> None:
     """Watch PATHS for markdown changes and auto-index."""
@@ -397,7 +490,10 @@ def watch(
         milvus_uri=milvus_uri, milvus_token=milvus_token,
         debounce_ms=debounce_ms,
     ))
-    ms = MemSearch(list(paths), **_cfg_to_memsearch_kwargs(cfg))
+    ms = MemSearch(
+        list(paths),
+        **_cfg_to_memsearch_kwargs_with_context(cfg, user=user),
+    )
 
     # Initial index: ensure existing files are indexed before watching
     n = _run(ms.index())
@@ -440,6 +536,7 @@ def compact(
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
 ) -> None:
     """Compress stored memories into a summary."""
     from .core import MemSearch
@@ -455,7 +552,7 @@ def compact(
     if cfg.compact.prompt_file and not prompt_template:
         prompt_template = Path(cfg.compact.prompt_file).read_text(encoding="utf-8")
 
-    ms = MemSearch(**_cfg_to_memsearch_kwargs(cfg))
+    ms = MemSearch(**_cfg_to_memsearch_kwargs_with_context(cfg, user=user))
     try:
         summary = _run(ms.compact(
             source=source,
@@ -463,6 +560,7 @@ def compact(
             llm_model=cfg.compact.llm_model or None,
             prompt_template=prompt_template,
             output_dir=output_dir,
+            user_id=_resolve_effective_user(cfg, user),
         ))
         if summary:
             click.echo("Compact complete. Summary:\n")
@@ -477,10 +575,12 @@ def compact(
 @click.option("--collection", "-c", default=None, help="Milvus collection name.")
 @click.option("--milvus-uri", default=None, help="Milvus connection URI.")
 @click.option("--milvus-token", default=None, help="Milvus auth token.")
+@click.option("--user", default=None, help="User ID for isolation.")
 def stats(
     collection: str | None,
     milvus_uri: str | None,
     milvus_token: str | None,
+    user: str | None,
 ) -> None:
     """Show statistics about the index."""
     from .store import MilvusStore
@@ -495,7 +595,8 @@ def stats(
         dimension=None,
     )
     try:
-        count = store.count()
+        resolved_user = _resolve_effective_user(cfg, user) if user else ""
+        count = store.count(user_id=resolved_user)
         click.echo(f"Total indexed chunks: {count}")
     finally:
         store.close()
@@ -528,6 +629,184 @@ def reset(
         click.echo("Dropped collection.")
     finally:
         store.close()
+
+
+# ======================================================================
+# Memory command group
+# ======================================================================
+
+
+@cli.group("memory")
+def memory_group() -> None:
+    """Manage short-term and long-term memory files."""
+
+
+@memory_group.command("write")
+@click.argument("content", required=False)
+@click.option("--stdin", "from_stdin", is_flag=True, help="Read content from stdin.")
+@click.option("--source", default="manual", help="Write source label.")
+@click.option("--tag", "tags", multiple=True, help="Optional tag(s).")
+@click.option("--session-id", default=None, help="Session ID for anchor comment.")
+@click.option("--turn-id", default=None, help="Turn ID for anchor comment.")
+@click.option("--transcript-path", default=None, help="Transcript path for anchor comment.")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_write(
+    content: str | None,
+    from_stdin: bool,
+    source: str,
+    tags: tuple[str, ...],
+    session_id: str | None,
+    turn_id: str | None,
+    transcript_path: str | None,
+    user: str | None,
+) -> None:
+    """Write one short-memory entry."""
+    if from_stdin:
+        content = sys.stdin.read()
+    if not content or not content.strip():
+        click.echo("Error: empty content. Pass text argument or --stdin.", err=True)
+        sys.exit(1)
+
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    path = _run(
+        mm.write_short(
+            content,
+            source=source,
+            tags=list(tags) if tags else None,
+            session_id=session_id,
+            turn_id=turn_id,
+            transcript_path=transcript_path,
+        )
+    )
+    if path is None:
+        click.echo("Skipped duplicate short-memory entry.")
+    else:
+        click.echo(str(path))
+
+
+@memory_group.command("list")
+@click.option("--days", default=30, type=int, help="Lookback days.")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_list(days: int, user: str | None) -> None:
+    """List short-memory files."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    files = mm.short.list_files(days=days)
+    if not files:
+        click.echo("No short-memory files found.")
+        return
+    for file in files:
+        click.echo(str(file))
+
+
+@memory_group.command("read")
+@click.option("--date", "day", default=None, help="Date like YYYY-MM-DD (default today).")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_read(day: str | None, user: str | None) -> None:
+    """Read one short-memory daily file."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    try:
+        text = mm.short.read(day=day)
+    except ValueError:
+        click.echo("Invalid --date format, expected YYYY-MM-DD.", err=True)
+        sys.exit(1)
+
+    if not text.strip():
+        click.echo("No memory content found.")
+        return
+    click.echo(text)
+
+
+@memory_group.command("consolidate")
+@click.option("--days", default=7, type=int, help="Lookback days.")
+@click.option("--force", is_flag=True, help="Ignore watermark and force processing.")
+@click.option("--llm-provider", default=None, help="Override LLM provider for consolidation.")
+@click.option("--llm-model", default=None, help="Override LLM model for consolidation.")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_consolidate(
+    days: int,
+    force: bool,
+    llm_provider: str | None,
+    llm_model: str | None,
+    user: str | None,
+) -> None:
+    """Extract long-term topics from short-term memory."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(
+        cfg,
+        user=user,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+    )
+    written = _run(mm.consolidate(days=days, force=force))
+    if not written:
+        click.echo("No new long-memory topics generated.")
+        return
+    for topic, path in written.items():
+        click.echo(f"{topic}: {path}")
+
+
+@memory_group.command("topics")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_topics(user: str | None) -> None:
+    """List all long-memory topics."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    topics = mm.long.list_topics()
+    if not topics:
+        click.echo("No long-memory topics found.")
+        return
+    for topic in topics:
+        click.echo(topic)
+
+
+@memory_group.command("read-topic")
+@click.argument("topic")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_read_topic(topic: str, user: str | None) -> None:
+    """Read one long-memory topic file."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    text = mm.long.read(topic)
+    if not text.strip():
+        click.echo(f"Topic not found: {topic}", err=True)
+        sys.exit(1)
+    click.echo(text)
+
+
+@memory_group.command("write-topic")
+@click.argument("topic")
+@click.argument("content")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_write_topic(topic: str, content: str, user: str | None) -> None:
+    """Write long-memory content into a topic file."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    path = _run(mm.write_long(topic, content))
+    click.echo(str(path))
+
+
+@memory_group.command("check-triggers")
+@click.argument("text")
+@click.option("--user", default=None, help="User ID for isolation.")
+def memory_check_triggers(text: str, user: str | None) -> None:
+    """Evaluate triggers against input text and execute matched actions."""
+    cfg = resolve_config()
+    mm = _build_memory_manager(cfg, user=user)
+    result = _run(mm.on_input(text))
+    payload = {
+        "keyword_triggered": result.keyword_triggered,
+        "matched_keyword": result.matched_keyword,
+        "short_memory_path": str(result.short_memory_path) if result.short_memory_path else None,
+        "long_memory_paths": (
+            {topic: str(path) for topic, path in result.long_memory_paths.items()}
+            if result.long_memory_paths
+            else {}
+        ),
+    }
+    click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 # ======================================================================
@@ -622,6 +901,68 @@ def config_init(project: bool) -> None:
     )
     result["compact"]["prompt_file"] = click.prompt(
         "  Prompt file path (empty for built-in)", default=current.compact.prompt_file,
+    )
+
+    # Memory
+    click.echo("\n── Memory ──")
+    result["memory"] = {}
+    result["memory"]["base_dir"] = click.prompt(
+        "  Base dir", default=current.memory.base_dir,
+    )
+    result["memory"]["user_id"] = click.prompt(
+        "  Default user_id (empty = auto resolve)", default=current.memory.user_id,
+    )
+    result["memory"]["keywords"] = click.prompt(
+        "  Keyword triggers (comma-separated)",
+        default=",".join(current.memory.keywords),
+    ).split(",")
+    result["memory"]["short_interval_seconds"] = click.prompt(
+        "  Short memory interval seconds (0=off)",
+        default=current.memory.short_interval_seconds,
+        type=int,
+    )
+    result["memory"]["long_interval_seconds"] = click.prompt(
+        "  Long memory interval seconds (0=off)",
+        default=current.memory.long_interval_seconds,
+        type=int,
+    )
+    result["memory"]["auto_consolidate"] = click.confirm(
+        "  Auto-consolidate long memory",
+        default=current.memory.auto_consolidate,
+    )
+    result["memory"]["consolidation_days"] = click.prompt(
+        "  Consolidation lookback days",
+        default=current.memory.consolidation_days,
+        type=int,
+    )
+
+    # Rerank
+    click.echo("\n── Rerank ──")
+    result["rerank"] = {}
+    result["rerank"]["enabled"] = click.confirm(
+        "  Enable reranker",
+        default=current.rerank.enabled,
+    )
+    result["rerank"]["provider"] = click.prompt(
+        "  Provider (api/cross-encoder)",
+        default=current.rerank.provider,
+    )
+    result["rerank"]["model"] = click.prompt(
+        "  Model",
+        default=current.rerank.model,
+    )
+    result["rerank"]["top_k_multiplier"] = click.prompt(
+        "  Candidate multiplier",
+        default=current.rerank.top_k_multiplier,
+        type=int,
+    )
+    result["rerank"]["api_base"] = click.prompt(
+        "  API base (for provider=api)",
+        default=current.rerank.api_base,
+    )
+    result["rerank"]["api_key_env"] = click.prompt(
+        "  API key env var name",
+        default=current.rerank.api_key_env,
     )
 
     save_config(result, target)

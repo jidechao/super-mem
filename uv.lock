@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
@@ -578,7 +578,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -1249,7 +1249,7 @@ wheels = [
 
 [[package]]
 name = "memsearch"
-version = "0.1.4"
+version = "0.1.11"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1265,6 +1265,7 @@ dependencies = [
 all = [
     { name = "anthropic" },
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "ollama" },
     { name = "sentence-transformers" },
     { name = "voyageai" },
@@ -1280,6 +1281,12 @@ local = [
 ]
 ollama = [
     { name = "ollama" },
+]
+rerank = [
+    { name = "httpx" },
+]
+rerank-local = [
+    { name = "sentence-transformers" },
 ]
 voyage = [
     { name = "voyageai" },
@@ -1301,18 +1308,20 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40" },
     { name = "click", specifier = ">=8.1" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.0" },
-    { name = "memsearch", extras = ["google", "voyage", "ollama", "local", "anthropic"], marker = "extra == 'all'" },
+    { name = "httpx", marker = "extra == 'rerank'", specifier = ">=0.27" },
+    { name = "memsearch", extras = ["google", "voyage", "ollama", "local", "anthropic", "rerank", "rerank-local"], marker = "extra == 'all'" },
     { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.4" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pymilvus", extras = ["milvus-lite"], specifier = ">=2.5.0" },
     { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=3.0" },
+    { name = "sentence-transformers", marker = "extra == 'rerank-local'", specifier = ">=3.0" },
     { name = "setuptools", specifier = "<75" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "tomli-w", specifier = ">=1.0" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.3" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["google", "voyage", "ollama", "local", "anthropic", "all"]
+provides-extras = ["google", "voyage", "ollama", "local", "anthropic", "rerank", "rerank-local", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1339,7 +1348,7 @@ name = "milvus-lite"
 version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tqdm" },
+    { name = "tqdm", marker = "python_full_version < '3.11' or sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/b2/acc5024c8e8b6a0b034670b8e8af306ebd633ede777dcbf557eac4785937/milvus_lite-2.5.1-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:6b014453200ba977be37ba660cb2d021030375fa6a35bc53c2e1d92980a0c512", size = 27934713, upload-time = "2025-06-30T04:23:37.028Z" },

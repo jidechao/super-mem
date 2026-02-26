@@ -3,6 +3,11 @@
 # The actual search + expand is handled by the memory-recall skill (pull-based, context: fork).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# On Windows, dispatch to native PowerShell hook.
+if [[ "${OS:-}" == "Windows_NT" ]] && command -v powershell &>/dev/null; then
+  exec powershell -ExecutionPolicy Bypass -File "$SCRIPT_DIR/user-prompt-submit.ps1" "$@"
+fi
 source "$SCRIPT_DIR/common.sh"
 
 # Skip short prompts (greetings, single words, etc.)

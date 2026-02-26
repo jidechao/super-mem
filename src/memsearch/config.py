@@ -25,7 +25,15 @@ GLOBAL_CONFIG_PATH = Path("~/.memsearch/config.toml").expanduser()
 PROJECT_CONFIG_PATH = Path(".memsearch.toml")
 
 # Fields that should be parsed as int when set via CLI strings
-_INT_FIELDS = {"max_chunk_size", "overlap_lines", "debounce_ms"}
+_INT_FIELDS = {
+    "max_chunk_size",
+    "overlap_lines",
+    "debounce_ms",
+    "short_interval_seconds",
+    "long_interval_seconds",
+    "consolidation_days",
+    "top_k_multiplier",
+}
 
 
 @dataclass
@@ -60,12 +68,41 @@ class WatchConfig:
 
 
 @dataclass
+class MemoryConfig:
+    base_dir: str = "memory"
+    user_id: str = ""
+    short_memory_dir: str = "short-memory"
+    long_memory_dir: str = "long-memory"
+    keywords: list[str] = field(default_factory=lambda: ["记住", "remember", "备忘"])
+    short_interval_seconds: int = 0
+    long_interval_seconds: int = 86400
+    auto_consolidate: bool = False
+    consolidation_days: int = 7
+
+
+@dataclass
+class RerankConfig:
+    enabled: bool = False
+    provider: str = "api"
+    model: str = ""
+    top_k_multiplier: int = 3
+    api_base: str = ""
+    api_key_env: str = "RERANK_API_KEY"
+    top_k_field: str = "top_n"
+    result_path: str = "results"
+    score_field: str = "relevance_score"
+    index_field: str = "index"
+
+
+@dataclass
 class MemSearchConfig:
     milvus: MilvusConfig = field(default_factory=MilvusConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     compact: CompactConfig = field(default_factory=CompactConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    rerank: RerankConfig = field(default_factory=RerankConfig)
 
 
 # -- Section name → dataclass mapping for typed reconstruction --
@@ -75,6 +112,8 @@ _SECTION_CLASSES: dict[str, type] = {
     "compact": CompactConfig,
     "chunking": ChunkingConfig,
     "watch": WatchConfig,
+    "memory": MemoryConfig,
+    "rerank": RerankConfig,
 }
 
 
@@ -141,6 +180,14 @@ def resolve_config(cli_overrides: dict[str, Any] | None = None) -> MemSearchConf
         from .embeddings import DEFAULT_MODELS
 
         cfg.embedding.model = DEFAULT_MODELS.get(cfg.embedding.provider, "")
+
+    if not cfg.rerank.model:
+        try:
+            from .rerankers import DEFAULT_RERANK_MODELS
+
+            cfg.rerank.model = DEFAULT_RERANK_MODELS.get(cfg.rerank.provider, "")
+        except Exception:
+            cfg.rerank.model = ""
 
     return cfg
 

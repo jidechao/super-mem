@@ -31,7 +31,9 @@ voyage = ["voyageai>=0.3"]
 ollama = ["ollama>=0.4"]
 local = ["sentence-transformers>=3.0"]
 anthropic = ["anthropic>=0.40"]
-all = ["memsearch[google,voyage,ollama,local,anthropic]"]
+rerank = ["httpx>=0.27"]
+rerank-local = ["sentence-transformers>=3.0"]
+all = ["memsearch[google,voyage,ollama,local,anthropic,rerank,rerank-local]"]
 
 [project.scripts]
 memsearch = "memsearch.cli:cli"

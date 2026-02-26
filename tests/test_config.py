@@ -30,6 +30,10 @@ def test_default_config():
     assert cfg.chunking.overlap_lines == 2
     assert cfg.watch.debounce_ms == 1500
     assert cfg.compact.llm_provider == "openai"
+    assert cfg.memory.base_dir == "memory"
+    assert cfg.memory.long_interval_seconds == 86400
+    assert cfg.rerank.enabled is False
+    assert cfg.rerank.provider == "api"
 
 
 def test_load_toml_file(tmp_path: Path):

@@ -2,6 +2,11 @@
 # Stop hook: parse transcript, summarize with claude -p, and save to memory.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# On Windows, dispatch to native PowerShell hook.
+if [[ "${OS:-}" == "Windows_NT" ]] && command -v powershell &>/dev/null; then
+  exec powershell -ExecutionPolicy Bypass -File "$SCRIPT_DIR/stop.ps1" "$@"
+fi
 source "$SCRIPT_DIR/common.sh"
 
 # Prevent infinite loop: if this Stop was triggered by a previous Stop hook, bail out
@@ -13,6 +18,11 @@ fi
 
 # Skip summarization when the required API key is missing — embedding/search
 # would fail, and the session likely only contains the "key not set" warning.
+if [ -z "$MEMSEARCH_CMD" ]; then
+  echo '{}'
+  exit 0
+fi
+
 _required_env_var() {
   case "$1" in
     openai) echo "OPENAI_API_KEY" ;;
@@ -52,11 +62,6 @@ if [ -z "$PARSED" ] || [ "$PARSED" = "(empty transcript)" ]; then
   echo '{}'
   exit 0
 fi
-
-# Determine today's date and current time
-TODAY=$(date +%Y-%m-%d)
-NOW=$(date +%H:%M)
-MEMORY_FILE="$MEMORY_DIR/$TODAY.md"
 
 # Extract session ID and last user turn UUID for progressive disclosure anchors
 SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
@@ -100,18 +105,17 @@ if [ -z "$SUMMARY" ]; then
   SUMMARY="$PARSED"
 fi
 
-# Append as a sub-heading under the session heading written by SessionStart
-# Include HTML comment anchor for progressive disclosure (L3 transcript lookup)
-{
-  echo "### $NOW"
-  if [ -n "$SESSION_ID" ]; then
-    echo "<!-- session:${SESSION_ID} turn:${LAST_USER_TURN_UUID} transcript:${TRANSCRIPT_PATH} -->"
-  fi
-  echo "$SUMMARY"
-  echo ""
-} >> "$MEMORY_FILE"
-
-# Index immediately — don't rely on watch (which may be killed by SessionEnd before debounce fires)
-run_memsearch index "$MEMORY_DIR"
+# Write through the new memory API with dedup + user isolation.
+cmd=(memory write --stdin --source auto/stop-hook)
+if [ -n "$SESSION_ID" ]; then
+  cmd+=(--session-id "$SESSION_ID")
+fi
+if [ -n "$LAST_USER_TURN_UUID" ]; then
+  cmd+=(--turn-id "$LAST_USER_TURN_UUID")
+fi
+if [ -n "$TRANSCRIPT_PATH" ]; then
+  cmd+=(--transcript-path "$TRANSCRIPT_PATH")
+fi
+printf '%s' "$SUMMARY" | run_memsearch "${cmd[@]}"
 
 echo '{}'

@@ -12,9 +12,9 @@ for p in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/bin" "/usr/local/bin"; do
   [[ -d "$p" ]] && [[ ":$PATH:" != *":$p:"* ]] && export PATH="$p:$PATH"
 done
 
-# Memory directory and memsearch state directory are project-scoped
+# memsearch state directory is project-scoped
 MEMSEARCH_DIR="${CLAUDE_PROJECT_DIR:-.}/.memsearch"
-MEMORY_DIR="$MEMSEARCH_DIR/memory"
+WATCH_PIDFILE="$MEMSEARCH_DIR/.watch.pid"
 
 # Find memsearch binary: prefer PATH, fallback to uvx
 _detect_memsearch() {
@@ -30,8 +30,49 @@ _detect_memsearch
 # Short command prefix for injected instructions (falls back to "memsearch" even if unavailable)
 MEMSEARCH_CMD_PREFIX="${MEMSEARCH_CMD:-memsearch}"
 
+# Resolve user ID (env first, then whoami), sanitize for paths/filters
+_resolve_user() {
+  local user="${MEMSEARCH_USER:-}"
+  if [ -z "$user" ]; then
+    user="$(whoami 2>/dev/null || true)"
+  fi
+  if [ -z "$user" ]; then
+    user="default"
+  fi
+  printf '%s' "$user" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9_-]/_/g' \
+    | sed 's/__*/_/g' \
+    | sed 's/^_//;s/_$//'
+}
+MEMSEARCH_USER="$(_resolve_user)"
+export MEMSEARCH_USER
+
 # Derive per-project collection name from project directory
 COLLECTION_NAME=$("$(dirname "${BASH_SOURCE[0]}")/../scripts/derive-collection.sh" "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true)
+
+# Resolve configured memory base dir (default: project-root/memory)
+_resolve_memory_base() {
+  local base=""
+  if [ -n "$MEMSEARCH_CMD" ]; then
+    base=$($MEMSEARCH_CMD config get memory.base_dir 2>/dev/null || echo "")
+  fi
+  if [ -z "$base" ]; then
+    base="memory"
+  fi
+
+  # Absolute path support (Unix + Windows drive letter)
+  if [[ "$base" =~ ^/ ]] || [[ "$base" =~ ^[A-Za-z]:[\\/].* ]]; then
+    printf '%s' "$base"
+  else
+    printf '%s/%s' "${CLAUDE_PROJECT_DIR:-.}" "$base"
+  fi
+}
+MEMORY_BASE="$(_resolve_memory_base)"
+USER_MEMORY_ROOT="$MEMORY_BASE/$MEMSEARCH_USER"
+MEMORY_DIR="$USER_MEMORY_ROOT/short-memory"
+LONG_MEMORY_DIR="$USER_MEMORY_ROOT/long-memory"
+WATCH_DIR="$USER_MEMORY_ROOT"
 
 # --- JSON helpers (jq preferred, python3 fallback) ---
 
@@ -87,21 +128,29 @@ _json_encode_str() {
 
 # Helper: ensure memory directory exists
 ensure_memory_dir() {
-  mkdir -p "$MEMORY_DIR"
+  mkdir -p "$MEMORY_DIR" "$LONG_MEMORY_DIR"
 }
 
 # Helper: run memsearch with arguments, silently fail if not available
 run_memsearch() {
-  if [ -n "$MEMSEARCH_CMD" ] && [ -n "$COLLECTION_NAME" ]; then
-    $MEMSEARCH_CMD "$@" --collection "$COLLECTION_NAME" 2>/dev/null || true
-  elif [ -n "$MEMSEARCH_CMD" ]; then
-    $MEMSEARCH_CMD "$@" 2>/dev/null || true
+  if [ -z "$MEMSEARCH_CMD" ]; then
+    return 0
+  fi
+
+  local cmd="$1"
+  local with_collection=true
+  if [ "$cmd" = "memory" ] || [ "$cmd" = "config" ] || [ "$cmd" = "transcript" ]; then
+    with_collection=false
+  fi
+
+  if [ "$with_collection" = true ] && [ -n "$COLLECTION_NAME" ]; then
+    $MEMSEARCH_CMD "$@" --collection "$COLLECTION_NAME" --user "$MEMSEARCH_USER" 2>/dev/null || true
+  else
+    $MEMSEARCH_CMD "$@" --user "$MEMSEARCH_USER" 2>/dev/null || true
   fi
 }
 
 # --- Watch singleton management ---
-
-WATCH_PIDFILE="$MEMSEARCH_DIR/.watch.pid"
 
 # Kill a process and its entire process group to avoid orphans
 _kill_tree() {
@@ -122,9 +171,9 @@ stop_watch() {
     rm -f "$WATCH_PIDFILE"
   fi
 
-  # 2. Sweep for orphaned watch processes targeting this MEMORY_DIR
+  # 2. Sweep for orphaned watch processes targeting this user memory root
   local orphans
-  orphans=$(pgrep -f "memsearch watch $MEMORY_DIR" 2>/dev/null || true)
+  orphans=$(pgrep -f "memsearch watch $WATCH_DIR" 2>/dev/null || true)
   if [ -n "$orphans" ]; then
     echo "$orphans" | while read -r opid; do
       kill "$opid" 2>/dev/null || true
@@ -143,9 +192,9 @@ start_watch() {
   stop_watch
 
   if [ -n "$COLLECTION_NAME" ]; then
-    nohup $MEMSEARCH_CMD watch "$MEMORY_DIR" --collection "$COLLECTION_NAME" &>/dev/null &
+    nohup $MEMSEARCH_CMD watch "$WATCH_DIR" --collection "$COLLECTION_NAME" --user "$MEMSEARCH_USER" &>/dev/null &
   else
-    nohup $MEMSEARCH_CMD watch "$MEMORY_DIR" &>/dev/null &
+    nohup $MEMSEARCH_CMD watch "$WATCH_DIR" --user "$MEMSEARCH_USER" &>/dev/null &
   fi
   echo $! > "$WATCH_PIDFILE"
 }

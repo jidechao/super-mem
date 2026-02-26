@@ -1,5 +1,6 @@
 """Tests for the Milvus store."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,39 @@ from memsearch.store import MilvusStore
 
 @pytest.fixture
 def store(tmp_path: Path):
+    uri = os.environ.get("MILVUS_URI", "").strip()
+    token = os.environ.get("MILVUS_TOKEN", "").strip()
+
+    if uri.startswith(("http://", "https://", "tcp://")):
+        if not token:
+            pytest.skip("MILVUS_TOKEN not set for remote Milvus tests")
+        collection = "memsearch_test_shared"
+
+        # Best-effort cleanup of stale test collections to satisfy free-tier limits.
+        try:
+            from pymilvus import MilvusClient
+
+            client = MilvusClient(uri=uri, token=token)
+            for name in client.list_collections():
+                if name.startswith("memsearch_test_") and name != collection:
+                    client.drop_collection(name)
+            client.close()
+        except Exception:
+            pass
+
+        s = MilvusStore(uri=uri, token=token, collection=collection, dimension=4)
+        s.drop()
+        s._ensure_collection()
+        yield s
+        s.drop()
+        s.close()
+        return
+
+    try:
+        import milvus_lite  # noqa: F401
+    except ImportError:
+        pytest.skip("milvus_lite not installed and no remote MILVUS_URI configured")
+
     db = tmp_path / "test_milvus.db"
     s = MilvusStore(uri=str(db), dimension=4)
     yield s
@@ -131,6 +165,11 @@ def test_hybrid_search(store: MilvusStore):
 
 
 def test_dimension_mismatch(tmp_path: Path):
+    try:
+        import milvus_lite  # noqa: F401
+    except ImportError:
+        pytest.skip("milvus_lite not installed")
+
     db = str(tmp_path / "dim_test.db")
     # Create collection with dim=4
     s1 = MilvusStore(uri=db, dimension=4)
@@ -158,3 +197,37 @@ def test_drop(store: MilvusStore):
     store._ensure_collection()
     results = store.search([1.0, 0.0, 0.0, 0.0], top_k=10)
     assert len(results) == 0
+
+
+def test_user_isolation_filtering(store: MilvusStore):
+    store.upsert(
+        [
+            {
+                "embedding": [1.0, 0.0, 0.0, 0.0],
+                "content": "Alice note",
+                "source": "u.md",
+                "heading": "",
+                "chunk_hash": "ua",
+                "heading_level": 0,
+                "start_line": 1,
+                "end_line": 1,
+                "user_id": "alice",
+            },
+            {
+                "embedding": [1.0, 0.0, 0.0, 0.0],
+                "content": "Bob note",
+                "source": "u.md",
+                "heading": "",
+                "chunk_hash": "ub",
+                "heading_level": 0,
+                "start_line": 1,
+                "end_line": 1,
+                "user_id": "bob",
+            },
+        ]
+    )
+
+    alice = store.search([1.0, 0.0, 0.0, 0.0], top_k=10, user_id="alice")
+    bob = store.search([1.0, 0.0, 0.0, 0.0], top_k=10, user_id="bob")
+    assert {r["content"] for r in alice} == {"Alice note"}
+    assert {r["content"] for r in bob} == {"Bob note"}

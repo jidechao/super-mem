@@ -2,6 +2,11 @@
 # SessionStart hook: start watch singleton + inject recent memory context.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# On Windows, dispatch to native PowerShell hook.
+if [[ "${OS:-}" == "Windows_NT" ]] && command -v powershell &>/dev/null; then
+  exec powershell -ExecutionPolicy Bypass -File "$SCRIPT_DIR/session-start.ps1" "$@"
+fi
 source "$SCRIPT_DIR/common.sh"
 
 # Bootstrap: if memsearch not available, install uv and warm up uvx cache
@@ -63,12 +68,8 @@ if [ "$KEY_MISSING" = true ]; then
   status+=" | ERROR: ${REQUIRED_KEY} not set — memory search disabled"
 fi
 
-# Write session heading to today's memory file
+# Ensure memory directory exists for this user
 ensure_memory_dir
-TODAY=$(date +%Y-%m-%d)
-NOW=$(date +%H:%M)
-MEMORY_FILE="$MEMORY_DIR/$TODAY.md"
-echo -e "\n## Session $NOW\n" >> "$MEMORY_FILE"
 
 # If API key is missing, show status and exit early (watch/search would fail)
 if [ "$KEY_MISSING" = true ]; then
@@ -84,7 +85,7 @@ start_watch
 # Always include status in systemMessage
 json_status=$(_json_encode_str "$status")
 
-# If memory dir has no .md files (other than the one we just created), nothing to inject
+# If memory dir has no .md files, nothing to inject
 if [ ! -d "$MEMORY_DIR" ] || ! ls "$MEMORY_DIR"/*.md &>/dev/null; then
   echo "{\"systemMessage\": $json_status}"
   exit 0

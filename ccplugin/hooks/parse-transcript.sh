@@ -13,6 +13,12 @@
 
 set -euo pipefail
 
+# On Windows, dispatch to native PowerShell hook.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${OS:-}" == "Windows_NT" ]] && command -v powershell &>/dev/null; then
+  exec powershell -ExecutionPolicy Bypass -File "$SCRIPT_DIR/parse-transcript.ps1" "$@"
+fi
+
 # parse-transcript requires jq for JSON processing; gracefully degrade if missing
 if ! command -v jq &>/dev/null; then
   echo "(transcript parsing skipped — jq not installed)"

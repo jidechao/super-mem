@@ -12,6 +12,30 @@ results = await mem.search("Redis config", top_k=3)    # semantic search
 print(results[0]["content"], results[0]["score"])       # content + similarity
 ```
 
+## Full Feature Demo Script
+
+Use the built-in single-file demo to run the complete workflow (short memory, long memory, triggers, user isolation, search filter, API reranker):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export MILVUS_URI="https://in03-4610f8d4c1674fb.serverless.aws-eu-central-1.cloud.zilliz.com"
+export MILVUS_TOKEN="..."
+export RERANK_API_BASE="https://api.siliconflow.cn/v1/rerank"
+export RERANK_API_KEY="..."
+
+uv run python examples/full_feature_demo.py
+```
+
+Optional arguments:
+
+```bash
+uv run python examples/full_feature_demo.py \
+  --collection memsearch_demo_full \
+  --user-a demo_alice \
+  --user-b demo_bob \
+  --query "认证和限流的关键决策是什么？"
+```
+
 ---
 
 ## `MemSearch`
