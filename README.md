@@ -372,7 +372,19 @@ print(result.final_output)
 
 ### 1）准备环境变量
 
-你可以在 `examples/.env` 中配置，也可以在命令行设置。
+请先基于示例文件创建你自己的本地配置文件（不要提交真实密钥）：
+
+```bash
+cp examples/.env.example examples/.env
+```
+
+在 Windows PowerShell 中可用：
+
+```powershell
+Copy-Item examples/.env.example examples/.env
+```
+
+然后编辑 `examples/.env`，填入你的真实密钥；或者直接在命令行设置环境变量。
 
 **PowerShell 示例**
 
@@ -398,7 +410,7 @@ $env:EMBEDDING_MODEL="Qwen/Qwen3-Embedding-4B"
 uv run python examples/full_feature_demo.py
 ```
 
-> Demo 会优先读取 `examples/.env`，并自动兼容 `EMBEDDING_BASE_URL` 到
+> Demo 会优先读取本地 `examples/.env`，并自动兼容 `EMBEDDING_BASE_URL` 到
 > `OPENAI_BASE_URL`（用于 OpenAI 兼容接口）。
 
 ## CLI 常用命令
