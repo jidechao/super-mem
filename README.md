@@ -470,6 +470,44 @@ memsearch stats --user alice
 memsearch reset
 ```
 
+## Production Hardening Updates (2026-03-02)
+
+This round of optimization focused on "keep current features working" first, then adding resilience and quality gates.
+
+- Runtime resilience:
+  - Added shared retry utility (`src/memsearch/resilience.py`) for transient external failures.
+  - Added timeout/retry support for compact LLM calls and API reranker calls.
+  - New config keys:
+    - `compact.timeout_seconds`, `compact.max_retries`, `compact.retry_base_delay`, `compact.retry_max_delay`
+    - `rerank.timeout_seconds`, `rerank.max_retries`, `rerank.retry_base_delay`, `rerank.retry_max_delay`
+- Memory typing:
+  - Added explicit `memory_type` (`short|long|other`) in indexed records to avoid path-string coupling in agents.
+  - Search results always expose `memory_type`; old records are backfilled from `source` at read time.
+- Operational robustness:
+  - `watch` callback exceptions are isolated and logged, so one bad callback no longer breaks indexing.
+  - `store.count()` uses iterator-first counting with safe fallback for better remote Milvus behavior.
+- Quality pipeline:
+  - Added CI workflow: `.github/workflows/ci.yml`
+  - CI now runs in project `.venv`: `ruff` + `mypy` + `pytest` with coverage threshold + smoke verification.
+  - Added quality config in `pyproject.toml`: coverage, ruff, mypy, dev tooling.
+- Regression protection:
+  - Added focused tests for resilience/retry, watcher behavior, config parsing, compact/rerank, and store count paths.
+  - Added smoke script for existing functionality: `scripts/verify_existing_functionality.py`
+
+### Validate in current project virtual environment
+
+```powershell
+# 1) full tests (project .venv)
+.\.venv\Scripts\python -m pytest -q
+
+# 2) existing functionality smoke checks
+.\.venv\Scripts\python scripts\verify_existing_functionality.py
+```
+
+Latest local baseline during this optimization:
+- `pytest`: `42 passed, 14 skipped`
+- smoke checks: passed (stats smoke is skipped when local Milvus is unavailable)
+
 ## 工作原理
 
 `memsearch` 的核心流程如下：

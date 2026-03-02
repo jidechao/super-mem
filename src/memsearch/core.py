@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
@@ -21,6 +22,16 @@ from .scanner import ScannedFile, scan_paths
 from .store import MilvusStore
 
 logger = logging.getLogger(__name__)
+
+
+def infer_memory_type_from_source(source: str) -> str:
+    """Infer memory type from source file path."""
+    normalized = source.replace("\\", "/").lower()
+    if "/short-memory/" in normalized:
+        return "short"
+    if "/long-memory/" in normalized:
+        return "long"
+    return "other"
 
 
 class MemSearch:
@@ -62,6 +73,10 @@ class MemSearch:
         memory_config: MemoryConfig | None = None,
         compact_llm_provider: str = "openai",
         compact_llm_model: str | None = None,
+        compact_timeout_seconds: float = 30.0,
+        compact_max_retries: int = 3,
+        compact_retry_base_delay: float = 0.2,
+        compact_retry_max_delay: float = 2.0,
         reranker: str | None = None,
         rerank_model: str | None = None,
         rerank_config: RerankConfig | None = None,
@@ -74,6 +89,10 @@ class MemSearch:
         self._memory_base_dir = Path(memory_base_dir)
         self._compact_llm_provider = compact_llm_provider
         self._compact_llm_model = compact_llm_model
+        self._compact_timeout_seconds = compact_timeout_seconds
+        self._compact_max_retries = compact_max_retries
+        self._compact_retry_base_delay = compact_retry_base_delay
+        self._compact_retry_max_delay = compact_retry_max_delay
         self._memory: MemoryManager | None = None
 
         self._paths = [str(p) for p in (paths or [])]
@@ -108,6 +127,10 @@ class MemSearch:
                     "result_path": self._rerank_config.result_path,
                     "score_field": self._rerank_config.score_field,
                     "index_field": self._rerank_config.index_field,
+                    "timeout_seconds": self._rerank_config.timeout_seconds,
+                    "max_retries": self._rerank_config.max_retries,
+                    "retry_base_delay": self._rerank_config.retry_base_delay,
+                    "retry_max_delay": self._rerank_config.retry_max_delay,
                 }
             self._reranker = get_reranker(
                 resolved_reranker,
@@ -125,6 +148,7 @@ class MemSearch:
         Returns the number of chunks indexed.  Also removes chunks for
         files that no longer exist on disk (deleted-file cleanup).
         """
+        started_at = time.perf_counter()
         files = scan_paths(self._paths)
         total = 0
         active_sources: set[str] = set()
@@ -140,7 +164,14 @@ class MemSearch:
                 self._store.delete_by_source(source, user_id=self._user_id)
                 logger.info("Removed stale chunks for deleted file: %s", source)
 
-        logger.info("Indexed %d chunks from %d files", total, len(files))
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "event=index_complete user_id=%s files=%d chunks=%d duration_ms=%d",
+            self._user_id,
+            len(files),
+            total,
+            duration_ms,
+        )
         return total
 
     async def index_file(self, path: str | Path) -> int:
@@ -215,6 +246,7 @@ class MemSearch:
                     "start_line": chunk.start_line,
                     "end_line": chunk.end_line,
                     "user_id": self._user_id,
+                    "memory_type": infer_memory_type_from_source(chunk.source),
                 }
             )
 
@@ -247,6 +279,7 @@ class MemSearch:
             Each dict contains ``content``, ``source``, ``heading``,
             ``score``, and other metadata.
         """
+        started_at = time.perf_counter()
         effective_user = self._resolve_user(user_id)
         embeddings = await self._embedder.embed([query])
         candidate_k = top_k
@@ -270,7 +303,21 @@ class MemSearch:
                     remapped.append({**candidates[result.index], "score": result.score})
             candidates = remapped
 
-        return candidates[:top_k]
+        results = candidates[:top_k]
+        for result in results:
+            memory_type = result.get("memory_type", "")
+            if memory_type not in {"short", "long", "other"}:
+                result["memory_type"] = infer_memory_type_from_source(result.get("source", ""))
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "event=search_complete user_id=%s top_k=%d query_len=%d results=%d duration_ms=%d",
+            effective_user,
+            top_k,
+            len(query),
+            len(results),
+            duration_ms,
+        )
+        return results
 
     # ------------------------------------------------------------------
     # Compact (compress memories)
@@ -313,10 +360,12 @@ class MemSearch:
         str
             The generated summary markdown.
         """
+        started_at = time.perf_counter()
+        effective_user = self._resolve_user(user_id)
         filter_expr = f'source == "{source}"' if source else ""
         all_chunks = self._store.query(
             filter_expr=filter_expr,
-            user_id=self._resolve_user(user_id),
+            user_id=effective_user,
         )
         if not all_chunks:
             return ""
@@ -324,6 +373,10 @@ class MemSearch:
         summary = await compact_chunks(
             all_chunks, llm_provider=llm_provider, model=llm_model,
             prompt_template=prompt_template,
+            timeout_seconds=self._compact_timeout_seconds,
+            max_retries=self._compact_max_retries,
+            retry_base_delay=self._compact_retry_base_delay,
+            retry_max_delay=self._compact_retry_max_delay,
         )
 
         # Write summary to memory/YYYY-MM-DD.md (append)
@@ -341,7 +394,16 @@ class MemSearch:
 
         # Index the updated file immediately
         n = await self.index_file(compact_file)
-        logger.info("Compacted %d chunks into %s (%d new chunks indexed)", len(all_chunks), compact_file, n)
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "event=compact_complete user_id=%s source=%s input_chunks=%d indexed_new=%d duration_ms=%d output=%s",
+            effective_user,
+            source or "",
+            len(all_chunks),
+            n,
+            duration_ms,
+            compact_file,
+        )
         return summary
 
     # ------------------------------------------------------------------
@@ -385,13 +447,24 @@ class MemSearch:
         from .watcher import FileWatcher
 
         def _on_change(event_type: str, file_path: Path) -> None:
-            if event_type == "deleted":
-                self._store.delete_by_source(str(file_path), user_id=self._user_id)
-                summary = f"Removed chunks for {file_path}"
-            else:
-                n = asyncio.run(self.index_file(file_path))
-                summary = f"Indexed {n} chunks from {file_path}"
-            logger.info(summary)
+            try:
+                if event_type == "deleted":
+                    self._store.delete_by_source(str(file_path), user_id=self._user_id)
+                    summary = f"Removed chunks for {file_path}"
+                else:
+                    n = asyncio.run(self.index_file(file_path))
+                    summary = f"Indexed {n} chunks from {file_path}"
+                logger.info(summary)
+            except Exception as exc:
+                summary = f"Error processing {event_type} for {file_path}: {exc}"
+                logger.exception(
+                    "event=watch_handler_error user_id=%s event_type=%s path=%s error_type=%s message=%s",
+                    self._user_id,
+                    event_type,
+                    file_path,
+                    exc.__class__.__name__,
+                    exc,
+                )
             if on_event is not None:
                 on_event(event_type, summary, file_path)
 

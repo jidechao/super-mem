@@ -231,3 +231,45 @@ def test_user_isolation_filtering(store: MilvusStore):
     bob = store.search([1.0, 0.0, 0.0, 0.0], top_k=10, user_id="bob")
     assert {r["content"] for r in alice} == {"Alice note"}
     assert {r["content"] for r in bob} == {"Bob note"}
+
+
+def test_count_user_uses_iterator_path():
+    class _Iterator:
+        def __init__(self):
+            self.closed = False
+            self._batches = [[{"chunk_hash": "a"}, {"chunk_hash": "b"}], [{"chunk_hash": "c"}], []]
+
+        def next(self):
+            return self._batches.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    class _Client:
+        def __init__(self):
+            self.it = _Iterator()
+
+        def query_iterator(self, **kwargs):  # noqa: ANN003
+            assert kwargs["output_fields"] == ["chunk_hash"]
+            assert kwargs["batch_size"] == 1000
+            assert kwargs["filter"] == 'user_id == "alice"'
+            return self.it
+
+    s = MilvusStore.__new__(MilvusStore)
+    s._client = _Client()  # type: ignore[attr-defined]
+    s._collection = "c"  # type: ignore[attr-defined]
+    count = s.count(user_id="alice")
+    assert count == 3
+    assert s._client.it.closed is True  # type: ignore[attr-defined]
+
+
+def test_count_user_falls_back_when_iterator_unavailable():
+    class _Client:
+        def query_iterator(self, **kwargs):  # noqa: ANN003
+            raise RuntimeError("iterator unavailable")
+
+    s = MilvusStore.__new__(MilvusStore)
+    s._client = _Client()  # type: ignore[attr-defined]
+    s._collection = "c"  # type: ignore[attr-defined]
+    s.query = lambda **kwargs: [{"chunk_hash": "1"}, {"chunk_hash": "2"}]  # type: ignore[method-assign]
+    assert s.count(user_id="alice") == 2

@@ -90,6 +90,22 @@ Writing to: /home/user/.memsearch/config.toml
   LLM provider [openai]:
   LLM model (empty for default) []:
   Prompt file path (empty for built-in) []:
+  Timeout seconds [30.0]:
+  Max retries [3]:
+  Retry base delay seconds [0.2]:
+  Retry max delay seconds [2.0]:
+
+-- Rerank --
+  Enable rerank [False]:
+  Provider (api/cross-encoder) [api]:
+  Model (empty for provider default) []:
+  Top-k multiplier [3]:
+  API base URL (empty for provider default) []:
+  API key env var [RERANK_API_KEY]:
+  Timeout seconds [30.0]:
+  Max retries [3]:
+  Retry base delay seconds [0.2]:
+  Retry max delay seconds [2.0]:
 
 Config saved to /home/user/.memsearch/config.toml
 ```
@@ -173,6 +189,26 @@ debounce_ms = 1500
 llm_provider = "openai"
 llm_model = ""
 prompt_file = ""
+timeout_seconds = 30.0
+max_retries = 3
+retry_base_delay = 0.2
+retry_max_delay = 2.0
+
+[rerank]
+enabled = false
+provider = "api"
+model = ""
+top_k_multiplier = 3
+api_base = ""
+api_key_env = "RERANK_API_KEY"
+top_k_field = "top_n"
+result_path = "results"
+score_field = "relevance_score"
+index_field = "index"
+timeout_seconds = 30.0
+max_retries = 3
+retry_base_delay = 0.2
+retry_max_delay = 2.0
 ```
 
 ```bash
@@ -201,6 +237,24 @@ provider = "openai"
 | `compact.llm_provider` | string | `openai` | LLM provider for compact summarization |
 | `compact.llm_model` | string | `""` | Override LLM model (empty = provider default) |
 | `compact.prompt_file` | string | `""` | Path to a custom prompt template file |
+| `compact.timeout_seconds` | float | `30.0` | Request timeout for compact LLM calls |
+| `compact.max_retries` | int | `3` | Retry attempts for transient compact failures |
+| `compact.retry_base_delay` | float | `0.2` | Initial retry backoff delay (seconds) |
+| `compact.retry_max_delay` | float | `2.0` | Maximum retry backoff delay (seconds) |
+| `rerank.enabled` | bool | `false` | Enable rerank by default for search |
+| `rerank.provider` | string | `api` | Rerank provider (`api` or `cross-encoder`) |
+| `rerank.model` | string | `""` | Override rerank model (empty = provider default) |
+| `rerank.top_k_multiplier` | int | `3` | Candidate expansion factor before rerank |
+| `rerank.api_base` | string | `""` | Base URL for API rerank endpoint |
+| `rerank.api_key_env` | string | `RERANK_API_KEY` | Environment variable name for API key |
+| `rerank.top_k_field` | string | `top_n` | Request field name for top-k in API payload |
+| `rerank.result_path` | string | `results` | Response field path containing rerank list |
+| `rerank.score_field` | string | `relevance_score` | Response field name for rerank score |
+| `rerank.index_field` | string | `index` | Response field name for candidate index |
+| `rerank.timeout_seconds` | float | `30.0` | Request timeout for API rerank calls |
+| `rerank.max_retries` | int | `3` | Retry attempts for transient rerank failures |
+| `rerank.retry_base_delay` | float | `0.2` | Initial retry backoff delay (seconds) |
+| `rerank.retry_max_delay` | float | `2.0` | Maximum retry backoff delay (seconds) |
 
 ---
 
@@ -268,6 +322,13 @@ Indexed 42 chunks.
 ## `memsearch search`
 
 Run a semantic search query against indexed chunks. Uses [hybrid search](https://milvus.io/docs/multi-vector-search.md) (dense vector cosine similarity + [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) full-text) with [RRF](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) reranking for best results.
+
+Each result includes a normalized `memory_type` field:
+- `short`: source path under `.../short-memory/...`
+- `long`: source path under `.../long-memory/...`
+- `other`: all other sources
+
+For older indexed data that does not store `memory_type`, memsearch backfills it at read time from `source` for compatibility.
 
 ### Options
 

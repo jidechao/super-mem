@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Quality (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create project virtual environment (.venv)
+        run: python -m venv .venv
+
+      - name: Install dependencies into .venv
+        run: |
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e .
+          .venv/bin/python -m pip install pytest pytest-asyncio pytest-cov tomli_w ruff mypy pip-audit
+
+      - name: Lint (ruff)
+        run: .venv/bin/python -m ruff check src tests scripts
+
+      - name: Type check (mypy)
+        run: .venv/bin/python -m mypy src/memsearch
+
+      - name: Run tests in project virtual environment
+        run: .venv/bin/python -m pytest -q --cov=src/memsearch --cov-report=term-missing --cov-fail-under=70
+
+      - name: Run existing-functionality smoke checks in .venv
+        run: .venv/bin/python scripts/verify_existing_functionality.py
+
+      - name: Dependency vulnerability scan (pip-audit)
+        continue-on-error: true
+        run: .venv/bin/python -m pip_audit

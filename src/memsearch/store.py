@@ -62,6 +62,7 @@ class MilvusStore:
         schema.add_field(field_name="start_line", datatype=DataType.INT64)
         schema.add_field(field_name="end_line", datatype=DataType.INT64)
         schema.add_field(field_name="user_id", datatype=DataType.VARCHAR, max_length=128, default_value="")
+        schema.add_field(field_name="memory_type", datatype=DataType.VARCHAR, max_length=16, default_value="other")
         schema.add_function(Function(
             name="bm25_fn",
             function_type=FunctionType.BM25,
@@ -182,7 +183,7 @@ class MilvusStore:
 
     _QUERY_FIELDS = [
         "content", "source", "heading", "chunk_hash",
-        "heading_level", "start_line", "end_line", "user_id",
+        "heading_level", "start_line", "end_line", "user_id", "memory_type",
     ]
 
     def query(self, *, filter_expr: str = "", user_id: str = "") -> list[dict[str, Any]]:
@@ -233,7 +234,35 @@ class MilvusStore:
     def count(self, *, user_id: str = "") -> int:
         """Return total number of stored chunks."""
         if user_id:
-            return len(self.query(user_id=user_id))
+            filter_expr = self._build_filter("", user_id)
+            iterator = None
+            try:
+                iterator = self._client.query_iterator(
+                    collection_name=self._collection,
+                    filter=filter_expr,
+                    output_fields=["chunk_hash"],
+                    batch_size=1000,
+                )
+                total = 0
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        break
+                    total += len(batch)
+                return total
+            except Exception as exc:
+                logger.warning(
+                    "Falling back to query-based count for user_id=%s due to iterator error: %s",
+                    user_id,
+                    exc,
+                )
+                return len(self.query(user_id=user_id))
+            finally:
+                if iterator is not None:
+                    try:
+                        iterator.close()
+                    except Exception:
+                        pass
         stats = self._client.get_collection_stats(self._collection)
         return stats.get("row_count", 0)
 

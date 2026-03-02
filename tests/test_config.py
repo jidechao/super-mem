@@ -30,10 +30,14 @@ def test_default_config():
     assert cfg.chunking.overlap_lines == 2
     assert cfg.watch.debounce_ms == 1500
     assert cfg.compact.llm_provider == "openai"
+    assert cfg.compact.timeout_seconds == 30.0
+    assert cfg.compact.max_retries == 3
     assert cfg.memory.base_dir == "memory"
     assert cfg.memory.long_interval_seconds == 86400
     assert cfg.rerank.enabled is False
     assert cfg.rerank.provider == "api"
+    assert cfg.rerank.timeout_seconds == 30.0
+    assert cfg.rerank.max_retries == 3
 
 
 def test_load_toml_file(tmp_path: Path):
@@ -118,6 +122,16 @@ def test_set_config_value_int_conversion(tmp_path: Path, monkeypatch: pytest.Mon
     data = load_config_file(cfg_path)
     assert data["chunking"]["max_chunk_size"] == 2000
     assert isinstance(data["chunking"]["max_chunk_size"], int)
+
+
+def test_set_config_value_rerank_retry_int_conversion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr("memsearch.config.GLOBAL_CONFIG_PATH", cfg_path)
+
+    set_config_value("rerank.max_retries", "5")
+    data = load_config_file(cfg_path)
+    assert data["rerank"]["max_retries"] == 5
+    assert isinstance(data["rerank"]["max_retries"], int)
 
 
 def test_get_config_value_invalid_key():

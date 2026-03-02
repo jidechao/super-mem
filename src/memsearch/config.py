@@ -33,6 +33,13 @@ _INT_FIELDS = {
     "long_interval_seconds",
     "consolidation_days",
     "top_k_multiplier",
+    "max_retries",
+}
+
+_FLOAT_FIELDS = {
+    "timeout_seconds",
+    "retry_base_delay",
+    "retry_max_delay",
 }
 
 
@@ -54,6 +61,10 @@ class CompactConfig:
     llm_provider: str = "openai"
     llm_model: str = ""
     prompt_file: str = ""
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+    retry_base_delay: float = 0.2
+    retry_max_delay: float = 2.0
 
 
 @dataclass
@@ -92,6 +103,10 @@ class RerankConfig:
     result_path: str = "results"
     score_field: str = "relevance_score"
     index_field: str = "index"
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+    retry_base_delay: float = 0.2
+    retry_max_delay: float = 2.0
 
 
 @dataclass
@@ -251,9 +266,11 @@ def set_config_value(key: str, value: Any, *, project: bool = False) -> None:
     if field_name not in valid:
         raise KeyError(f"Unknown config field: {field_name} in section {section}")
 
-    # Auto-convert int fields
+    # Auto-convert numeric fields
     if field_name in _INT_FIELDS and isinstance(value, str):
         value = int(value)
+    if field_name in _FLOAT_FIELDS and isinstance(value, str):
+        value = float(value)
 
     existing.setdefault(section, {})[field_name] = value
     save_config(existing, path)

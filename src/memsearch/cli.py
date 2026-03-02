@@ -69,6 +69,10 @@ def _cfg_to_memsearch_kwargs(cfg: MemSearchConfig) -> dict:
         "collection": cfg.milvus.collection,
         "max_chunk_size": cfg.chunking.max_chunk_size,
         "overlap_lines": cfg.chunking.overlap_lines,
+        "compact_timeout_seconds": cfg.compact.timeout_seconds,
+        "compact_max_retries": cfg.compact.max_retries,
+        "compact_retry_base_delay": cfg.compact.retry_base_delay,
+        "compact_retry_max_delay": cfg.compact.retry_max_delay,
     }
 
 
@@ -902,6 +906,26 @@ def config_init(project: bool) -> None:
     result["compact"]["prompt_file"] = click.prompt(
         "  Prompt file path (empty for built-in)", default=current.compact.prompt_file,
     )
+    result["compact"]["timeout_seconds"] = click.prompt(
+        "  Request timeout seconds",
+        default=current.compact.timeout_seconds,
+        type=float,
+    )
+    result["compact"]["max_retries"] = click.prompt(
+        "  Max retries",
+        default=current.compact.max_retries,
+        type=int,
+    )
+    result["compact"]["retry_base_delay"] = click.prompt(
+        "  Retry base delay (seconds)",
+        default=current.compact.retry_base_delay,
+        type=float,
+    )
+    result["compact"]["retry_max_delay"] = click.prompt(
+        "  Retry max delay (seconds)",
+        default=current.compact.retry_max_delay,
+        type=float,
+    )
 
     # Memory
     click.echo("\n── Memory ──")
@@ -963,6 +987,26 @@ def config_init(project: bool) -> None:
     result["rerank"]["api_key_env"] = click.prompt(
         "  API key env var name",
         default=current.rerank.api_key_env,
+    )
+    result["rerank"]["timeout_seconds"] = click.prompt(
+        "  Request timeout seconds",
+        default=current.rerank.timeout_seconds,
+        type=float,
+    )
+    result["rerank"]["max_retries"] = click.prompt(
+        "  Max retries",
+        default=current.rerank.max_retries,
+        type=int,
+    )
+    result["rerank"]["retry_base_delay"] = click.prompt(
+        "  Retry base delay (seconds)",
+        default=current.rerank.retry_base_delay,
+        type=float,
+    )
+    result["rerank"]["retry_max_delay"] = click.prompt(
+        "  Retry max delay (seconds)",
+        default=current.rerank.retry_max_delay,
+        type=float,
     )
 
     save_config(result, target)
