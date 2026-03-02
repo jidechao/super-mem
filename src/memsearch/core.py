@@ -24,12 +24,19 @@ from .store import MilvusStore
 logger = logging.getLogger(__name__)
 
 
-def infer_memory_type_from_source(source: str) -> str:
+def infer_memory_type_from_source(
+    source: str,
+    *,
+    short_memory_dir: str = "short-memory",
+    long_memory_dir: str = "long-memory",
+) -> str:
     """Infer memory type from source file path."""
     normalized = source.replace("\\", "/").lower()
-    if "/short-memory/" in normalized:
+    short_segment = f"/{short_memory_dir.strip('/').lower()}/"
+    long_segment = f"/{long_memory_dir.strip('/').lower()}/"
+    if short_segment in normalized:
         return "short"
-    if "/long-memory/" in normalized:
+    if long_segment in normalized:
         return "long"
     return "other"
 
@@ -246,7 +253,11 @@ class MemSearch:
                     "start_line": chunk.start_line,
                     "end_line": chunk.end_line,
                     "user_id": self._user_id,
-                    "memory_type": infer_memory_type_from_source(chunk.source),
+                    "memory_type": infer_memory_type_from_source(
+                        chunk.source,
+                        short_memory_dir=self._memory_config.short_memory_dir,
+                        long_memory_dir=self._memory_config.long_memory_dir,
+                    ),
                 }
             )
 
@@ -307,7 +318,11 @@ class MemSearch:
         for result in results:
             memory_type = result.get("memory_type", "")
             if memory_type not in {"short", "long", "other"}:
-                result["memory_type"] = infer_memory_type_from_source(result.get("source", ""))
+                result["memory_type"] = infer_memory_type_from_source(
+                    result.get("source", ""),
+                    short_memory_dir=self._memory_config.short_memory_dir,
+                    long_memory_dir=self._memory_config.long_memory_dir,
+                )
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
             "event=search_complete user_id=%s top_k=%d query_len=%d results=%d duration_ms=%d",

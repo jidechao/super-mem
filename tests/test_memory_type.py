@@ -13,6 +13,24 @@ def test_infer_memory_type_from_source_paths():
     assert infer_memory_type_from_source("docs/notes.md") == "other"
 
 
+def test_infer_memory_type_from_source_paths_with_custom_dirs():
+    assert infer_memory_type_from_source(
+        "memory/alice/s-memory/2026-03-02.md",
+        short_memory_dir="s-memory",
+        long_memory_dir="l-memory",
+    ) == "short"
+    assert infer_memory_type_from_source(
+        r"memory\alice\l-memory\topic.md",
+        short_memory_dir="s-memory",
+        long_memory_dir="l-memory",
+    ) == "long"
+    assert infer_memory_type_from_source(
+        "docs/notes.md",
+        short_memory_dir="s-memory",
+        long_memory_dir="l-memory",
+    ) == "other"
+
+
 @pytest.mark.asyncio
 async def test_embed_and_store_sets_memory_type():
     class _Embedder:
@@ -33,6 +51,7 @@ async def test_embed_and_store_sets_memory_type():
     mem._embedder = _Embedder()
     mem._store = _Store()
     mem._user_id = "alice"
+    mem._memory_config = MemoryConfig()
 
     chunks = [
         Chunk(
@@ -92,3 +111,27 @@ async def test_search_backfills_missing_memory_type_from_source():
     results = await mem.search("query", top_k=10)
     assert [r["memory_type"] for r in results] == ["short", "long", "other", "long"]
 
+
+@pytest.mark.asyncio
+async def test_search_backfills_with_custom_memory_dirs():
+    class _Embedder:
+        async def embed(self, contents):  # noqa: ANN001
+            return [[0.1, 0.2, 0.3] for _ in contents]
+
+    class _Store:
+        def search(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return [
+                {"content": "a", "source": "memory/alice/s-memory/2026-03-02.md", "score": 0.9},
+                {"content": "b", "source": "memory/alice/l-memory/topic.md", "score": 0.8},
+            ]
+
+    mem = MemSearch.__new__(MemSearch)
+    mem._embedder = _Embedder()
+    mem._store = _Store()
+    mem._user_id = "alice"
+    mem._memory_config = MemoryConfig(short_memory_dir="s-memory", long_memory_dir="l-memory")
+    mem._reranker = None
+    mem._rerank_config = RerankConfig()
+
+    results = await mem.search("query", top_k=10)
+    assert [r["memory_type"] for r in results] == ["short", "long"]
