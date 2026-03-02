@@ -508,6 +508,27 @@ Latest local baseline during this optimization:
 - `pytest`: `42 passed, 14 skipped`
 - smoke checks: passed (stats smoke is skipped when local Milvus is unavailable)
 
+### One-click Real E2E Chain (with report)
+
+Run full real-environment chain (index/recall/rerank/LLM QA/short write/auto long extract/index)
+and auto-clean test data after completion:
+
+```powershell
+.\.venv\Scripts\python scripts\e2e_real_chain.py run --cleanup-after
+```
+
+The script writes both JSON and Markdown reports under `./reports/`, for example:
+- `reports/e2e_real_chain_20260302T133619Z.json`
+- `reports/e2e_real_chain_20260302T133619Z.md`
+
+Manual cleanup mode is also available:
+
+```powershell
+.\.venv\Scripts\python scripts\e2e_real_chain.py cleanup `
+  --collection memsearch_e2e_real_1772458532 `
+  --memory-path .\memory\e2e-real\1772458532
+```
+
 ## 工作原理
 
 `memsearch` 的核心流程如下：
