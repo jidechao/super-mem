@@ -80,10 +80,17 @@ class WatchConfig:
 
 @dataclass
 class MemoryConfig:
+    """Memory configuration - SINGLE SOURCE OF TRUTH for default values.
+
+    Note: These defaults are also referenced in:
+    - core.py:infer_memory_type_from_source() (for standalone calls)
+    - memory/__init__.py:_FallbackMemoryConfig (for isolated usage)
+    """
+
     base_dir: str = "memory"
     user_id: str = ""
-    short_memory_dir: str = "short-memory"
-    long_memory_dir: str = "long-memory"
+    short_memory_dir: str = "short-memory"  # Keep in sync with core.py and memory/__init__.py
+    long_memory_dir: str = "long-memory"    # Keep in sync with core.py and memory/__init__.py
     keywords: list[str] = field(default_factory=lambda: ["记住", "remember", "备忘"])
     short_interval_seconds: int = 0
     long_interval_seconds: int = 86400

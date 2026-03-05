@@ -27,10 +27,14 @@ logger = logging.getLogger(__name__)
 def infer_memory_type_from_source(
     source: str,
     *,
-    short_memory_dir: str = "short-memory",
-    long_memory_dir: str = "long-memory",
+    short_memory_dir: str = "short-memory",  # Sync with MemoryConfig.short_memory_dir
+    long_memory_dir: str = "long-memory",    # Sync with MemoryConfig.long_memory_dir
 ) -> str:
-    """Infer memory type from source file path."""
+    """Infer memory type from source file path.
+
+    Note: Default values match MemoryConfig. Callers should pass configured
+    values from MemoryConfig for consistency when available.
+    """
     normalized = source.replace("\\", "/").lower()
     short_segment = f"/{short_memory_dir.strip('/').lower()}/"
     long_segment = f"/{long_memory_dir.strip('/').lower()}/"
@@ -394,11 +398,19 @@ class MemSearch:
             retry_max_delay=self._compact_retry_max_delay,
         )
 
-        # Write summary to memory/YYYY-MM-DD.md (append)
-        base = Path(output_dir) if output_dir else Path(self._paths[0]) if self._paths else Path.cwd()
-        memory_dir = base / "memory"
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        compact_file = memory_dir / f"{date.today()}.md"
+        # Write summary to short-memory/YYYY-MM-DD.md (append)
+        # Use configured memory base_dir and short_memory_dir for consistency
+        if output_dir:
+            base = Path(output_dir)
+        elif self._paths:
+            base = Path(self._paths[0])
+        else:
+            base = self._memory_base_dir
+
+        # Construct path: <base>/<user_id>/<short_memory_dir>/YYYY-MM-DD.md
+        short_dir = base / self._user_id / self._memory_config.short_memory_dir
+        short_dir.mkdir(parents=True, exist_ok=True)
+        compact_file = short_dir / f"{date.today()}.md"
         compact_heading = f"\n\n## Memory Compact\n\n"
         with open(compact_file, "a", encoding="utf-8") as f:
             if compact_file.stat().st_size == 0:

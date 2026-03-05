@@ -68,10 +68,26 @@ _resolve_memory_base() {
     printf '%s/%s' "${CLAUDE_PROJECT_DIR:-.}" "$base"
   fi
 }
+
+# Resolve configured short/long memory dir names (with defaults)
+_resolve_memory_dir_name() {
+  local config_key="$1" default_name="$2"
+  local dir_name=""
+  if [ -n "$MEMSEARCH_CMD" ]; then
+    dir_name=$($MEMSEARCH_CMD config get "$config_key" 2>/dev/null || echo "")
+  fi
+  if [ -z "$dir_name" ]; then
+    dir_name="$default_name"
+  fi
+  printf '%s' "$dir_name"
+}
+
 MEMORY_BASE="$(_resolve_memory_base)"
 USER_MEMORY_ROOT="$MEMORY_BASE/$MEMSEARCH_USER"
-MEMORY_DIR="$USER_MEMORY_ROOT/short-memory"
-LONG_MEMORY_DIR="$USER_MEMORY_ROOT/long-memory"
+SHORT_MEMORY_DIR_NAME="$(_resolve_memory_dir_name memory.short_memory_dir short-memory)"
+LONG_MEMORY_DIR_NAME="$(_resolve_memory_dir_name memory.long_memory_dir long-memory)"
+MEMORY_DIR="$USER_MEMORY_ROOT/$SHORT_MEMORY_DIR_NAME"
+LONG_MEMORY_DIR="$USER_MEMORY_ROOT/$LONG_MEMORY_DIR_NAME"
 WATCH_DIR="$USER_MEMORY_ROOT"
 
 # --- JSON helpers (jq preferred, python3 fallback) ---

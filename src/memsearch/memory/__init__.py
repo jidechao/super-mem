@@ -11,17 +11,36 @@ from .triggers import TriggerManager, TriggerResult
 from .user import resolve_user_id
 
 
+# NOTE: Defaults must match config.MemoryConfig - keep in sync!
+_MEMORY_DEFAULTS = {
+    "base_dir": "memory",
+    "user_id": "",
+    "short_memory_dir": "short-memory",
+    "long_memory_dir": "long-memory",
+    "keywords": ["记住", "remember", "备忘"],
+    "short_interval_seconds": 0,
+    "long_interval_seconds": 86400,
+    "auto_consolidate": False,
+    "consolidation_days": 7,
+}
+
+
 @dataclass
 class _FallbackMemoryConfig:
-    base_dir: str = "memory"
-    user_id: str = ""
-    short_memory_dir: str = "short-memory"
-    long_memory_dir: str = "long-memory"
-    keywords: list[str] = field(default_factory=lambda: ["记住", "remember", "备忘"])
-    short_interval_seconds: int = 0
-    long_interval_seconds: int = 86400
-    auto_consolidate: bool = False
-    consolidation_days: int = 7
+    """Fallback config when MemoryConfig is not provided.
+
+    Defaults mirror config.MemoryConfig - keep both in sync!
+    """
+
+    base_dir: str = _MEMORY_DEFAULTS["base_dir"]
+    user_id: str = _MEMORY_DEFAULTS["user_id"]
+    short_memory_dir: str = _MEMORY_DEFAULTS["short_memory_dir"]
+    long_memory_dir: str = _MEMORY_DEFAULTS["long_memory_dir"]
+    keywords: list[str] = field(default_factory=lambda: _MEMORY_DEFAULTS["keywords"].copy())
+    short_interval_seconds: int = _MEMORY_DEFAULTS["short_interval_seconds"]
+    long_interval_seconds: int = _MEMORY_DEFAULTS["long_interval_seconds"]
+    auto_consolidate: bool = _MEMORY_DEFAULTS["auto_consolidate"]
+    consolidation_days: int = _MEMORY_DEFAULTS["consolidation_days"]
 
 
 class MemoryManager:

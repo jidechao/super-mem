@@ -103,10 +103,38 @@ function _resolve_memory_base {
     return (Join-Path $projectDir $base)
 }
 
+function _resolve_memory_dir_name {
+    param(
+        [string]$configKey,
+        [string]$defaultName
+    )
+    $dirName = ""
+    if ($MEMSEARCH_CMD) {
+        try {
+            if ($MEMSEARCH_CMD -eq "memsearch") {
+                $dirName = (& memsearch config get $configKey 2>$null | Select-Object -First 1)
+            } elseif ($MEMSEARCH_CMD -eq "uvx memsearch") {
+                $dirName = (& uvx memsearch config get $configKey 2>$null | Select-Object -First 1)
+            }
+            if ($dirName) {
+                $dirName = $dirName.Trim()
+            }
+        } catch {
+            $dirName = ""
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($dirName)) {
+        $dirName = $defaultName
+    }
+    return $dirName
+}
+
 $MEMORY_BASE = _resolve_memory_base
 $USER_MEMORY_ROOT = Join-Path $MEMORY_BASE $MEMSEARCH_USER
-$MEMORY_DIR = Join-Path $USER_MEMORY_ROOT "short-memory"
-$LONG_MEMORY_DIR = Join-Path $USER_MEMORY_ROOT "long-memory"
+$SHORT_MEMORY_DIR_NAME = _resolve_memory_dir_name "memory.short_memory_dir" "short-memory"
+$LONG_MEMORY_DIR_NAME = _resolve_memory_dir_name "memory.long_memory_dir" "long-memory"
+$MEMORY_DIR = Join-Path $USER_MEMORY_ROOT $SHORT_MEMORY_DIR_NAME
+$LONG_MEMORY_DIR = Join-Path $USER_MEMORY_ROOT $LONG_MEMORY_DIR_NAME
 $WATCH_DIR = $USER_MEMORY_ROOT
 
 function _json_val {

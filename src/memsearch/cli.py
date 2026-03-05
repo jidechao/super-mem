@@ -41,6 +41,9 @@ _PARAM_MAP = {
     "max_chunk_size": "chunking.max_chunk_size",
     "overlap_lines": "chunking.overlap_lines",
     "debounce_ms": "watch.debounce_ms",
+    "memory_base_dir": "memory.base_dir",
+    "short_memory_dir": "memory.short_memory_dir",
+    "long_memory_dir": "memory.long_memory_dir",
 }
 
 
