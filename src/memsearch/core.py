@@ -185,13 +185,20 @@ class MemSearch:
         )
         return total
 
-    async def index_file(self, path: str | Path) -> int:
+    async def index_file(self, path: str | Path, *, user_id: str | None = None) -> int:
         """Index a single file.  Returns number of chunks."""
         p = Path(path).expanduser().resolve()
         sf = ScannedFile(path=p, mtime=p.stat().st_mtime, size=p.stat().st_size)
-        return await self._index_file(sf)
+        return await self._index_file(sf, user_id=user_id)
 
-    async def _index_file(self, f: ScannedFile, *, force: bool = False) -> int:
+    async def _index_file(
+        self,
+        f: ScannedFile,
+        *,
+        force: bool = False,
+        user_id: str | None = None,
+    ) -> int:
+        effective_user = self._resolve_user(user_id)
         source = str(f.path)
         text = f.path.read_text(encoding="utf-8")
         chunks = chunk_markdown(
@@ -204,11 +211,12 @@ class MemSearch:
         # Compute composite chunk IDs (matching OpenClaw format)
         chunk_ids = {
             self._scoped_chunk_id(
-                compute_chunk_id(c.source, c.start_line, c.end_line, c.content_hash, model)
+                compute_chunk_id(c.source, c.start_line, c.end_line, c.content_hash, model),
+                user_id=effective_user,
             )
             for c in chunks
         }
-        old_ids = self._store.hashes_by_source(source, user_id=self._user_id)
+        old_ids = self._store.hashes_by_source(source, user_id=effective_user)
 
         # Delete stale chunks that are no longer in the file
         stale = old_ids - chunk_ids
@@ -223,19 +231,26 @@ class MemSearch:
             chunks = [
                 c for c in chunks
                 if self._scoped_chunk_id(
-                    compute_chunk_id(c.source, c.start_line, c.end_line, c.content_hash, model)
+                    compute_chunk_id(c.source, c.start_line, c.end_line, c.content_hash, model),
+                    user_id=effective_user,
                 )
                 not in old_ids
             ]
             if not chunks:
                 return 0
 
-        return await self._embed_and_store(chunks)
+        return await self._embed_and_store(chunks, user_id=effective_user)
 
-    async def _embed_and_store(self, chunks: list[Chunk]) -> int:
+    async def _embed_and_store(
+        self,
+        chunks: list[Chunk],
+        *,
+        user_id: str | None = None,
+    ) -> int:
         if not chunks:
             return 0
 
+        effective_user = self._resolve_user(user_id)
         model = self._embedder.model_name
         contents = [c.content for c in chunks]
         embeddings = await self._embedder.embed(contents)
@@ -248,7 +263,7 @@ class MemSearch:
             )
             records.append(
                 {
-                    "chunk_hash": self._scoped_chunk_id(chunk_id),
+                    "chunk_hash": self._scoped_chunk_id(chunk_id, user_id=effective_user),
                     "embedding": embeddings[i],
                     "content": chunk.content,
                     "source": chunk.source,
@@ -256,7 +271,7 @@ class MemSearch:
                     "heading_level": chunk.heading_level,
                     "start_line": chunk.start_line,
                     "end_line": chunk.end_line,
-                    "user_id": self._user_id,
+                    "user_id": effective_user,
                     "memory_type": infer_memory_type_from_source(
                         chunk.source,
                         short_memory_dir=self._memory_config.short_memory_dir,
@@ -265,7 +280,7 @@ class MemSearch:
                 }
             )
 
-        return self._store.upsert(records, user_id=self._user_id)
+        return self._store.upsert(records, user_id=effective_user)
 
     # ------------------------------------------------------------------
     # Search
@@ -381,7 +396,8 @@ class MemSearch:
         """
         started_at = time.perf_counter()
         effective_user = self._resolve_user(user_id)
-        filter_expr = f'source == "{source}"' if source else ""
+        escaped_source = source.replace("\\", "\\\\").replace('"', '\\"') if source else ""
+        filter_expr = f'source == "{escaped_source}"' if source else ""
         all_chunks = self._store.query(
             filter_expr=filter_expr,
             user_id=effective_user,
@@ -408,7 +424,7 @@ class MemSearch:
             base = self._memory_base_dir
 
         # Construct path: <base>/<user_id>/<short_memory_dir>/YYYY-MM-DD.md
-        short_dir = base / self._user_id / self._memory_config.short_memory_dir
+        short_dir = base / effective_user / self._memory_config.short_memory_dir
         short_dir.mkdir(parents=True, exist_ok=True)
         compact_file = short_dir / f"{date.today()}.md"
         compact_heading = f"\n\n## Memory Compact\n\n"
@@ -420,7 +436,7 @@ class MemSearch:
             f.write("\n")
 
         # Index the updated file immediately
-        n = await self.index_file(compact_file)
+        n = await self.index_file(compact_file, user_id=effective_user)
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
             "event=compact_complete user_id=%s source=%s input_chunks=%d indexed_new=%d duration_ms=%d output=%s",
@@ -528,10 +544,11 @@ class MemSearch:
             return self._user_id
         return resolve_user_id(explicit=user_id, config_value=self._memory_config.user_id)
 
-    def _scoped_chunk_id(self, base_chunk_id: str) -> str:
-        if not self._user_id:
+    def _scoped_chunk_id(self, base_chunk_id: str, *, user_id: str | None = None) -> str:
+        effective_user = self._resolve_user(user_id)
+        if not effective_user:
             return base_chunk_id
-        return f"{self._user_id}:{base_chunk_id}"
+        return f"{effective_user}:{base_chunk_id}"
 
     def close(self) -> None:
         """Release resources."""

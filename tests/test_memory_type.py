@@ -1,3 +1,4 @@
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -135,3 +136,43 @@ async def test_search_backfills_with_custom_memory_dirs():
 
     results = await mem.search("query", top_k=10)
     assert [r["memory_type"] for r in results] == ["short", "long"]
+
+
+@pytest.mark.asyncio
+async def test_compact_honors_explicit_user_when_writing_and_reindexing(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    queried: list[tuple[str, str]] = []
+    indexed_paths: list[str] = []
+
+    class _Store:
+        def query(self, *, filter_expr="", user_id=""):  # noqa: ANN001
+            queried.append((filter_expr, user_id))
+            return [{"content": "remember this", "source": 'C:\\temp\\note "1".md'}]
+
+    async def fake_compact(chunks, **kwargs):  # noqa: ANN001
+        return "summary body"
+
+    async def fake_index_file(path, *, user_id=None):  # noqa: ANN001
+        indexed_paths.append(str(path))
+        return 1
+
+    mem = MemSearch.__new__(MemSearch)
+    mem._store = _Store()
+    mem._user_id = "alice"
+    mem._paths = []
+    mem._memory_base_dir = tmp_path
+    mem._memory_config = MemoryConfig()
+    mem._compact_timeout_seconds = 30.0
+    mem._compact_max_retries = 3
+    mem._compact_retry_base_delay = 0.2
+    mem._compact_retry_max_delay = 2.0
+    mem.index_file = fake_index_file  # type: ignore[method-assign]
+
+    monkeypatch.setattr("memsearch.core.compact_chunks", fake_compact)
+
+    summary = await mem.compact(source='C:\\temp\\note "1".md', user_id="bob")
+
+    assert summary == "summary body"
+    assert queried == [('source == "C:\\\\temp\\\\note \\\"1\\\".md"', "bob")]
+    expected_path = tmp_path / "bob" / "short-memory" / f"{date.today()}.md"
+    assert expected_path.exists()
+    assert indexed_paths == [str(expected_path)]

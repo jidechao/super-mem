@@ -10,3 +10,11 @@ build/
 .memsearch/
 CONTEXT.md
 examples/.env
+.cursor/plans/
+reports/
+memory/demo-full*/
+memory/e2e-real-*/
+memory/smoke_user/
+articles/*.mhtml
+docs/*.pdf
+docs/*.pptx

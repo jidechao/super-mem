@@ -233,7 +233,7 @@ def search(
         results = _run(
             ms.search(
                 query,
-                top_k=top_k or 5,
+                top_k=top_k if top_k is not None else 5,
                 filter_expr=filter_expr or "",
                 user_id=effective_user,
             )

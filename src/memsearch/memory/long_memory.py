@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
+import time
 from pathlib import Path
 from typing import Any
 
@@ -73,9 +74,9 @@ class LongMemoryManager:
 
     async def consolidate(self, days: int = 7, *, force: bool = False) -> dict[str, Path]:
         """Consolidate short memories into topic files with dual dedup."""
-        watermark = None if force else self._read_watermark()
-        if watermark is not None:
-            files = self.short_memory.list_files_since(watermark)
+        watermark_state = None if force else self._read_watermark_state()
+        if watermark_state is not None:
+            files = self._list_files_after_watermark(watermark_state)
         else:
             files = self.short_memory.list_files(days=days)
 
@@ -119,7 +120,7 @@ class LongMemoryManager:
             path = await self.write(name, merged)
             written[name] = path
 
-        self._write_watermark(date.today())
+        self._write_watermark(date.today(), files)
         return written
 
     async def _merge_into_topic(self, topic: str, new_content: str) -> str:
@@ -160,23 +161,86 @@ class LongMemoryManager:
             return ""
         return path.read_text(encoding="utf-8")
 
-    def _read_watermark(self) -> date | None:
-        """Read consolidate watermark date."""
+    def _read_watermark_state(self) -> dict[str, Any] | None:
+        """Read consolidate watermark state."""
         file = self.dir / self.WATERMARK_FILE
         if not file.exists():
             return None
         raw = file.read_text(encoding="utf-8").strip()
         if not raw:
             return None
+
+        if raw.startswith("{"):
+            try:
+                loaded = json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+            watermark_raw = str(loaded.get("date", "")).strip()
+            try:
+                watermark_date = date.fromisoformat(watermark_raw)
+            except ValueError:
+                return None
+            files = loaded.get("files", {})
+            recorded_at_ns = loaded.get("recorded_at_ns")
+            if not isinstance(recorded_at_ns, int):
+                recorded_at_ns = int(file.stat().st_mtime_ns)
+            return {
+                "date": watermark_date,
+                "files": files if isinstance(files, dict) else {},
+                "recorded_at_ns": recorded_at_ns,
+            }
+
         try:
-            return date.fromisoformat(raw)
+            watermark_date = date.fromisoformat(raw)
         except ValueError:
             return None
+        return {"date": watermark_date, "files": {}, "recorded_at_ns": int(file.stat().st_mtime_ns)}
 
-    def _write_watermark(self, watermark_date: date) -> None:
-        """Persist consolidate watermark date."""
+    def _write_watermark(self, watermark_date: date, files: list[Path]) -> None:
+        """Persist consolidate watermark state."""
         file = self.dir / self.WATERMARK_FILE
-        file.write_text(watermark_date.isoformat(), encoding="utf-8")
+        payload = {
+            "date": watermark_date.isoformat(),
+            "recorded_at_ns": time.time_ns(),
+            "files": {
+                str(path.name): {
+                    "mtime": path.stat().st_mtime,
+                    "mtime_ns": path.stat().st_mtime_ns,
+                    "size": path.stat().st_size,
+                }
+                for path in files
+                if path.exists()
+            },
+        }
+        file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def _list_files_after_watermark(self, watermark_state: dict[str, Any]) -> list[Path]:
+        watermark_date = watermark_state["date"]
+        known_files = watermark_state.get("files", {})
+        recorded_at_ns = int(watermark_state.get("recorded_at_ns") or 0)
+        files: list[Path] = []
+        for file in self.short_memory.dir.glob("*.md"):
+            file_day = self.short_memory._parse_file_date(file)
+            if file_day is None:
+                continue
+
+            stat = file.stat()
+            if file_day > watermark_date:
+                files.append(file)
+                continue
+
+            state = known_files.get(file.name)
+            if not isinstance(state, dict):
+                if stat.st_mtime_ns > recorded_at_ns:
+                    files.append(file)
+                continue
+
+            previous_mtime_ns = state.get("mtime_ns")
+            if not isinstance(previous_mtime_ns, int):
+                previous_mtime_ns = state.get("mtime")
+            if previous_mtime_ns != stat.st_mtime_ns or state.get("size") != stat.st_size:
+                files.append(file)
+        return sorted(files)
 
     def _topic_file(self, topic: str) -> Path:
         safe = self._TOPIC_FILENAME_PATTERN.sub("_", topic).strip(" ._")

@@ -94,16 +94,35 @@ class FileWatcher:
         callback: Callable[[str, Path], None],
         debounce_ms: int = DEFAULT_DEBOUNCE_MS,
     ) -> None:
-        self._paths = [Path(p).expanduser().resolve() for p in paths]
-        self._handler = _MarkdownHandler(callback, debounce_ms=debounce_ms)
+        resolved_paths = [Path(p).expanduser().resolve() for p in paths]
+        self._dir_paths = [p for p in resolved_paths if p.is_dir()]
+        self._file_paths = {p for p in resolved_paths if p.is_file()}
+
+        def _dispatch(event_type: str, file_path: Path) -> None:
+            resolved = file_path.expanduser().resolve()
+            if self._file_paths and resolved not in self._file_paths and resolved.parent not in self._dir_paths:
+                return
+            callback(event_type, resolved)
+
+        self._handler = _MarkdownHandler(_dispatch, debounce_ms=debounce_ms)
         self._observer = Observer()
 
     def start(self) -> None:
         """Start watching in a background thread."""
-        for p in self._paths:
-            if p.is_dir():
-                self._observer.schedule(self._handler, str(p), recursive=True)
-                logger.info("Watching %s", p)
+        scheduled_dirs: set[Path] = set()
+        for p in self._dir_paths:
+            self._observer.schedule(self._handler, str(p), recursive=True)
+            scheduled_dirs.add(p)
+            logger.info("Watching %s", p)
+
+        for file_path in self._file_paths:
+            parent = file_path.parent
+            if parent in scheduled_dirs:
+                continue
+            self._observer.schedule(self._handler, str(parent), recursive=False)
+            scheduled_dirs.add(parent)
+            logger.info("Watching %s", parent)
+
         self._observer.start()
 
     def stop(self) -> None:
