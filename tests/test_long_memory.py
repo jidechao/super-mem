@@ -5,7 +5,7 @@ from datetime import date, datetime, time
 
 import pytest
 
-from memsearch.memory.long_memory import LongMemoryManager
+from memsearch.memory.long_memory import LongMemoryManager, TOPIC_EXTRACTION_PROMPT
 from memsearch.memory.short_memory import ShortMemoryManager
 
 
@@ -153,3 +153,11 @@ async def test_consolidate_picks_up_new_backdated_file_after_watermark(tmp_path,
 
     assert "history-topic" in second_written
     assert any("imported historical detail" in call for call in calls)
+
+
+
+def test_topic_extraction_prompt_balances_recall_and_noise():
+    assert "?????????" in TOPIC_EXTRACTION_PROMPT
+    assert "??????????" in TOPIC_EXTRACTION_PROMPT
+    assert "????????????????????" in TOPIC_EXTRACTION_PROMPT
+    assert "?????" in TOPIC_EXTRACTION_PROMPT
